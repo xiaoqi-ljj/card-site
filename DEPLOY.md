@@ -7,39 +7,44 @@
 
 ## 一、部署到 Render（免费，拿公网地址，约 5 分钟）
 
-> 前提：有一个 GitHub 账号（没有就去 https://github.com 注册，免费）。
+代码已在公开仓库：**https://codeberg.org/xiaoqid/card-site**
 
-1. 把本目录（`card_site/`）整个推送到一个 GitHub 仓库（见下方「本地初始化命令」）。
-2. 打开 https://dashboard.render.com → 右上角 **New** → **Blueprint** → 连接你的 GitHub → 选这个仓库。
-3. Render 会读 `render.yaml` 自动建好 Web Service（免费档 `free`）。
-4. 点 **Create New Resources**，等 1–2 分钟构建完成。
-5. 完成后 Render 给你一个公网地址，形如 `https://17kernel-card.onrender.com`。
+> 关键点：Render 不能"直传文件"，但支持从「公共 Git 仓库地址」拉代码。我们用 Codeberg
+> 公开仓库，不用再注册 GitHub（也不用连任何 Git 账号到 Render）。
 
-部署后请在 Render 后台 **Environment** 里确认/修改：
-- `CARD_SECRET`：已填好（与 17内核 二进制一致），**不要改**，否则线上卡密在程序里校验不过。
-- `ADMIN_PASSWORD`：已填交接密码，**务必改成你自己的强密码**（后台登录用）。
-- `SESSION_SECRET`：已固定，保持即可。
+1. 打开 https://dashboard.render.com → 右上角 **New** → **Web Service**。
+2. 选 **Public Git Repository**（不是 GitHub/GitLab/Bitbucket 那几个）→ 粘贴：
+   `https://codeberg.org/xiaoqid/card-site.git` → **Connect**。
+3. 填写表单：
+   - **Name**：`17kernel-card`（随便填）
+   - **Branch**：`main`
+   - **Runtime**：**Python 3**
+   - **Build Command**：`pip install -r requirements.txt`
+   - **Start Command**：`gunicorn -w 4 -b 0.0.0.0:$PORT app:app`
+4. 展开 **Advanced** → **Environment** 添加变量：
+   - `CARD_SECRET` = `84ca1fb19e20a7da73035a8bdd3ca406a422b7414145487cc7be9c658bc9ec78dce4b24cb8c0bbfd`（与 17内核 一致，**别改**）
+   - `ADMIN_PASSWORD` = 你自己设一个强密码（后台登录用，**务必填**，否则用默认随机密码）
+   - `SESSION_SECRET` 不用填（Render 自动生成保管）
+5. 点 **Create Web Service** → 等 1–2 分钟构建 → 拿到永久地址 `https://17kernel-card.onrender.com`。
 
-> 免费档特性：15 分钟无访问会休眠，下一次访问冷启动约 30 秒；SQLite 重启会清空库存
-> （已发出的卡密不受影响，因为卡密靠 HMAC 离线校验，与库存无关）。
+> 因为是「Public Git Repository」方式，render.yaml 不会被自动读取，所以上面的命令/变量要手填。
+> 免费档特性：15 分钟无访问会休眠，下次访问约 30 秒冷启动；SQLite 重启清空库存（已发卡密不受影响）。
 
 ---
 
-## 二、本地初始化 / 推送到 GitHub 的命令
+## 二、后续更新代码（可选）
 
-在本机（装有 git）执行：
+仓库已在 Codeberg：`https://codeberg.org/xiaoqid/card-site`。改完本地文件后：
 
 ```bash
 cd card_site
-git init
 git add -A
-git commit -m "17kernel card site"
-git branch -M main
-git remote add origin https://github.com/你的用户名/你的仓库.git
-git push -u origin main
+git commit -m "update"
+git push
 ```
 
-推完再去 Render 连这个仓库即可。
+Render 在「Public Git Repository」方式下**不会自动拉新代码**，需到 Render 后台该服务页
+点 **Manual Deploy → Deploy latest commit** 手动重新部署。
 
 ---
 
