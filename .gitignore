@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+cards.db
+server.log
+*.log
+.venv/
+venv/
+.env

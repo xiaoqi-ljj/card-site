@@ -1,0 +1,22 @@
+# Render.com 一键免费部署配置
+# 用法：把 card_site/ 推到 GitHub -> Render 新建 Blueprint -> 选此文件
+# 免费版 Web Service 有休眠（不活跃 15 分钟休眠），但够用；SQLite 在重启后重置，
+# 不影响已发卡密校验（卡密靠 HMAC 离线校验，与库存无关）。
+services:
+  - type: web
+    name: 17kernel-card
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 4 -b 0.0.0.0:$PORT app:app
+    envVars:
+      - key: CARD_SECRET
+        value: "84ca1fb19e20a7da73035a8bdd3ca406a422b7414145487cc7be9c658bc9ec78dce4b24cb8c0bbfd"
+        # ↑ 必须与 17内核 二进制里的 kLicenseSecret 完全一致（已与分发包内一致）。
+        #   app.py 未设置环境变量时也会回退到该值，所以留空也能用，但显式写出来最稳。
+      - key: SESSION_SECRET
+        value: "a7f3c1e9b2480d5f6c2a9e1b7d4f08c3a6e5b2d9f1c8a7e0b3d6c5f4a2e9b8d7c6"
+        # ↑ 固定会话密钥：免费版会休眠/重启，若不固定则每次重启后台被登出。生产可换成你自己的随机串。
+      - key: ADMIN_PASSWORD
+        value: "g0ehu2RZEwMRWWhmDigj1sP8iy0"
+        # ↑ 后台登录密码（部署后务必在 Render 环境变量里改成你自己的强密码）。
