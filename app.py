@@ -28,7 +28,26 @@ CARD_SECRET = os.environ.get("CARD_SECRET", "84ca1fb19e20a7da73035a8bdd3ca406a42
 # Flask 会话签名密钥：生产环境务必用环境变量覆盖（随机长串）。
 SESSION_SECRET = os.environ.get("SESSION_SECRET", secrets.token_hex(32))
 # 首次启动管理员密码（请尽快在后台修改）。生产环境用环境变量 ADMIN_PASSWORD 覆盖。
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "g0ehu2RZEwMRWWhmDigj1sP8iy0")
+def _resolve_admin_password():
+    # 生产务必通过环境变量 ADMIN_PASSWORD 设置；未设置时本地生成一个并写入 .adminpw
+    # （已加入 .gitignore，不进公开仓库），保证同机重启后密码不变。
+    env = os.environ.get("ADMIN_PASSWORD")
+    if env:
+        return env
+    fp = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".adminpw")
+    try:
+        with open(fp, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        pw = secrets.token_urlsafe(18)
+        try:
+            with open(fp, "w", encoding="utf-8") as f:
+                f.write(pw)
+        except OSError:
+            pass
+        return pw
+
+ADMIN_PASSWORD = _resolve_admin_password()
 # 卡密机器字段（通用卡统一值）
 MACHINE = "GENERIC"
 # 默认卡密有效期档位（天）

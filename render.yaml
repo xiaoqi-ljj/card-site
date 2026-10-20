@@ -15,8 +15,8 @@ services:
         # ↑ 必须与 17内核 二进制里的 kLicenseSecret 完全一致（已与分发包内一致）。
         #   app.py 未设置环境变量时也会回退到该值，所以留空也能用，但显式写出来最稳。
       - key: SESSION_SECRET
-        value: "a7f3c1e9b2480d5f6c2a9e1b7d4f08c3a6e5b2d9f1c8a7e0b3d6c5f4a2e9b8d7c6"
-        # ↑ 固定会话密钥：免费版会休眠/重启，若不固定则每次重启后台被登出。生产可换成你自己的随机串。
+        generateValue: true
+        # ↑ 固定会话密钥：Render 生成并保管（不进仓库）。免费版休眠/重启后后台不会被登出。
       - key: ADMIN_PASSWORD
-        value: "g0ehu2RZEwMRWWhmDigj1sP8iy0"
-        # ↑ 后台登录密码（部署后务必在 Render 环境变量里改成你自己的强密码）。
+        sync: false
+        # ↑ 不写死在仓库里。部署后在 Render 后台 Environment 自行设置一个强密码（否则用 app 本地随机默认，不安全）。
