@@ -126,6 +126,10 @@ def init_db():
     db.commit()
     db.close()
 
+# 应用启动即建表 / 种植管理员。Render 用 gunicorn 以 `app:app` 导入本模块，
+# __name__ 不是 "__main__"，所以必须在此处（模块加载时）调用，否则线上表不存在会 500。
+init_db()
+
 # ----------------------------- 卡密 / 令牌算法 -----------------------------
 def make_card(secret, expiry_unix, machine=MACHINE):
     """与 licensing.cpp signLicense 字节级一致（3 段通用卡）。"""
