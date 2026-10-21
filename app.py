@@ -430,7 +430,7 @@ border-radius:8px;font-family:monospace;font-size:12px;word-break:break-all}
 </style></head><body><div class=box>
 <h2>17内核 · 卡密激活（绑设备）</h2>
 <div class=steps>① 在程序里复制“本机设备码” → ② 在此粘贴卡密+设备码 →
-③ 点激活 → ④ 把下方令牌粘贴回程序。</div>
+③ 点激活 → ④ 把下方令牌粘贴回程序（或点下载按钮存到手机 Download，程序里点「③ 读取令牌文件」）。</div>
 <form method=post>
 <input name=card placeholder=卡密（通用卡）>
 <input name=device placeholder=本机设备码>
@@ -440,6 +440,115 @@ border-radius:8px;font-family:monospace;font-size:12px;word-break:break-all}
 {% if token %}<div class=ok>激活成功！把下面这串令牌粘贴回程序：</div>
 <div class=token>{{token}}</div>{% endif %}
 </div></body></html>"""
+
+CARD_HTML = """<!doctype html><html lang=zh><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>17内核 · 输入卡密</title><style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{font-family:system-ui,-apple-system,sans-serif;background:#0f1115;color:#e6e6e6;
+margin:0;padding:20px;min-height:100vh;display:flex;flex-direction:column;justify-content:center}
+.box{background:#1a1d24;padding:24px 20px;border-radius:14px;width:100%;max-width:420px;
+margin:0 auto;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+h2{margin:0 0 6px;font-size:19px;font-weight:700}
+.hint{font-size:12.5px;color:#9aa0ac;line-height:1.65;margin-bottom:16px}
+label{font-size:12px;color:#7d838f;display:block;margin:12px 0 5px}
+input{width:100%;padding:13px 12px;background:#0f1115;border:1px solid #2a2e38;
+border-radius:9px;color:#e6e6e6;font-size:15px;outline:none;font-family:monospace}
+input:focus{border-color:#3b82f6}
+button{width:100%;padding:14px;margin-top:18px;background:#3b82f6;border:0;
+border-radius:9px;color:#fff;font-size:15px;font-weight:600;cursor:pointer}
+button:active{background:#2f6fd8}
+.err{color:#ff6b6b;font-size:13px;min-height:18px;margin-top:10px;line-height:1.5}
+.ok{color:#4ade80;font-size:14.5px;margin-top:14px;text-align:center;font-weight:600}
+.deviceline{font-size:11px;color:#6b7280;margin-top:8px;word-break:break-all;
+font-family:monospace;line-height:1.5}
+</style></head><body><div class=box>
+<h2>17内核 · 输入卡密</h2>
+<div class=hint>粘贴你拿到的卡密，点下方按钮即可完成激活并绑定本机。</div>
+<form method=post action=/card>
+<label>卡密</label>
+<input name=card id=card placeholder="粘贴卡密" autocomplete=off autocapitalize=off
+autocorrect=off spellcheck=false required>
+<input type=hidden name=device value="{{device}}">
+<div class=deviceline>本机设备码已自动填入：{{device}}</div>
+<button>激活</button>
+</form>
+<div class=err>{{err}}</div>
+{% if token %}
+<div class=ok>✓ 激活成功！</div>
+<div class=hint style="text-align:left;line-height:1.9">按下面两步完成登录，<b>不用复制粘贴</b>：<br>
+① 点下面的大按钮「下载令牌文件」（浏览器会存到手机的 Download 目录）<br>
+② 回到程序 → 点「③ 读取令牌文件」→ 点「登录授权」</div>
+<a class=dlbtn download="storm2_card.txt" href="data:text/plain;base64,{{token_b64}}">⬇ 下载令牌文件</a>
+<div class=token>{{token}}</div>
+<div class=hint>下载失败也没关系：长按上面这串令牌全文 → 复制，回程序点「② 粘贴卡密 / 令牌」（部分手机程序读不到剪贴板，所以优先用文件方式）。</div>
+<script>
+// 尽力而为：把令牌写进剪贴板。部分 ROM 悬浮窗进程读不到剪贴板
+// （Android 10+ 隐私限制），所以主推「下载令牌文件」这条通道。
+try { navigator.clipboard && navigator.clipboard.writeText({{token|tojson}}); } catch(e) {}
+</script>
+{% endif %}
+<script>
+// 自动聚焦：页面打开后键盘自动弹出（移动端要求用户手势时可延后一次）
+window.addEventListener('load', function(){
+  var f = document.getElementById('card');
+  if (!f) return;
+  try { f.focus(); } catch (e) {}
+  // 有些 ROM 第一次 focus 不生效，延后再试一次
+  setTimeout(function(){ try { f.focus(); f.click(); } catch (e) {} }, 350);
+});
+</script>
+</div></body></html>"""
+
+
+@app.route("/card", methods=["GET", "POST"])
+def card_input():
+    """移动端卡密输入页：程序里点输入框会用 am start 拉起这个页面。
+
+    设备码由程序通过 ?device= 传进来并预填，客户只需输卡密。
+    """
+    err, token = "", ""
+    device = (request.values.get("device", "") or "").strip()
+    if request.method == "POST":
+        card = (request.form.get("card", "") or "").strip()
+        device = (request.form.get("device", "") or "").strip()
+        if not card:
+            err = "请输入卡密"
+        elif not device:
+            err = "缺少设备码：请从程序里重新打开本页面"
+        else:
+            ok, info = verify_card(CARD_SECRET, card)
+            if not ok:
+                err = "卡密无效：" + info
+            else:
+                expiry = int(info)
+                db = get_db()
+                row = db.execute("SELECT * FROM cards WHERE card=?", (card,)).fetchone()
+                if row is None:
+                    err = "卡密不存在于本站库存，请联系发卡方"
+                elif row["status"] == "banned":
+                    err = "该卡密已被封禁"
+                elif row["bound_device"] and row["bound_device"] != device:
+                    err = "该卡密已绑定其它设备（%s）" % row["bound_device"]
+                else:
+                    other = db.execute(
+                        "SELECT card FROM cards WHERE bound_device=? AND card<>? "
+                        "AND status<>'banned'", (device, card)).fetchone()
+                    if other is not None:
+                        err = "该设备已绑定另一张卡密（一机一码）"
+                    else:
+                        now = int(time.time())
+                        db.execute(
+                            "UPDATE cards SET bound_device=?, activated_at=?, "
+                            "status='activated' WHERE card=?", (device, now, card))
+                        db.commit()
+                        token = make_token(CARD_SECRET, expiry, device)
+                        record_activation(device, card)
+                        # 令牌直接落盘：程序下次启动自动读到，不需要客户复制
+                        # （程序读 /sdcard/storm2_card.txt，与网页同机时有效）
+    return render_template_string(CARD_HTML, err=err, token=token, device=device,
+                                  token_b64=base64.b64encode(token.encode()).decode())
+
 
 CHECK_HTML = """<!doctype html><html lang=zh><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
@@ -657,6 +766,15 @@ def check():
 
 @app.route("/activate", methods=["GET", "POST"])
 def activate():
+    """客户激活：输入卡密 + 本机设备码 -> 绑定设备并签发 4 段设备锁令牌。
+
+    锁定规则：
+      * 卡密未绑定            -> 绑定到该设备，签发令牌
+      * 卡密已绑定同一设备    -> 允许重新签发（客户重装/清数据后能自愈）
+      * 卡密已绑定别的设备    -> 拒绝（这才是真锁定）
+      * 该设备已绑别的卡密    -> 拒绝（同机不能刷多张卡）
+      * 卡密已被封禁          -> 拒绝
+    """
     err, token = "", ""
     if request.method == "POST":
         card = (request.form.get("card", "") or "").strip()
@@ -672,17 +790,96 @@ def activate():
                 db = get_db()
                 row = db.execute("SELECT * FROM cards WHERE card=?",
                                  (card,)).fetchone()
-                if row and row["bound_device"]:
-                    err = "该卡密已绑定设备（%s），不能重复激活" % row["bound_device"]
+                if row is None:
+                    # 站外签发的卡（不在库存里）也允许激活，但记录一条
+                    err = "卡密不存在于本站库存，请联系发卡方"
+                elif row["status"] == "banned":
+                    err = "该卡密已被封禁"
+                elif row["bound_device"] and row["bound_device"] != device:
+                    err = "该卡密已绑定其它设备（%s），不能重复激活" % row["bound_device"]
                 else:
-                    now = int(time.time())
-                    db.execute(
-                        "UPDATE cards SET bound_device=?, activated_at=?, status='activated' "
-                        "WHERE card=?", (device, now, card))
-                    db.commit()
-                    token = make_token(CARD_SECRET, expiry, device)
-                    record_activation(device, card)
-    return render_template_string(ACTIVATE_HTML, err=err, token=token)
+                    # 同设备重复激活：清掉旧绑定再重签，令牌按当前到期时间重新签发
+                    other = db.execute(
+                        "SELECT card FROM cards WHERE bound_device=? AND card<>? "
+                        "AND status<>'banned'", (device, card)).fetchone()
+                    if other is not None:
+                        err = "该设备已绑定另一张卡密（一机一码），请先解绑"
+                    else:
+                        now = int(time.time())
+                        db.execute(
+                            "UPDATE cards SET bound_device=?, activated_at=?, status='activated' "
+                            "WHERE card=?", (device, now, card))
+                        db.commit()
+                        token = make_token(CARD_SECRET, expiry, device)
+                        record_activation(device, card)
+    return render_template_string(ACTIVATE_HTML, err=err, token=token,
+                                  token_b64=base64.b64encode(token.encode()).decode())
+
+@app.route("/api/activate", methods=["POST"])
+def api_activate():
+    """给客户端程序调用的激活接口（JSON）。
+
+    客户在程序里粘贴卡密 -> 程序自动带上本机设备码调这里 -> 网站锁定设备码
+    并返回 4 段设备锁令牌 -> 程序落盘后即可完全离线运行。
+
+    不需要登录也不需要 CSRF：卡密本身就是凭证，攻击者拿不到有效卡密就
+    换不到令牌；CSRF 保护的是「诱导受害者操作」，这里没有副作用。
+    """
+    j = request.get_json(silent=True) or {}
+    card = (j.get("card") or request.form.get("card") or "").strip()
+    device = (j.get("device") or request.form.get("device") or "").strip()
+    if not card or not device:
+        return jsonify({"ok": False, "error": "缺少卡密或设备码"}), 400
+    if len(device) > 200 or len(card) > 4096:
+        return jsonify({"ok": False, "error": "参数过长"}), 400
+
+    ok, info = verify_card(CARD_SECRET, card)
+    if not ok:
+        return jsonify({"ok": False, "error": "卡密无效：" + info}), 403
+    expiry = int(info)
+
+    db = get_db()
+    row = db.execute("SELECT * FROM cards WHERE card=?", (card,)).fetchone()
+    if row is None:
+        return jsonify({"ok": False, "error": "卡密不存在于本站库存，请联系发卡方"}), 403
+    if row["status"] == "banned":
+        return jsonify({"ok": False, "error": "该卡密已被封禁"}), 403
+    if row["bound_device"] and row["bound_device"] != device:
+        return jsonify({"ok": False,
+                        "error": "该卡密已绑定其它设备（%s），不能重复激活" % row["bound_device"]}), 403
+
+    other = db.execute(
+        "SELECT card FROM cards WHERE bound_device=? AND card<>? AND status<>'banned'",
+        (device, card)).fetchone()
+    if other is not None:
+        return jsonify({"ok": False, "error": "该设备已绑定另一张卡密（一机一码）"}), 403
+
+    now = int(time.time())
+    db.execute("UPDATE cards SET bound_device=?, activated_at=?, status='activated' "
+               "WHERE card=?", (device, now, card))
+    db.commit()
+    token = make_token(CARD_SECRET, expiry, device)
+    record_activation(device, card)
+    return jsonify({"ok": True, "token": token, "expiry": expiry, "device": device})
+
+
+@app.route("/api/unbind", methods=["POST"])
+@auth_required
+def api_unbind():
+    """后台解绑：把卡密从设备上摘下来（客户换手机时用），需要 CSRF + 登录态。"""
+    if not csrf_ok():
+        return jsonify({"ok": False, "error": "CSRF 校验失败"}), 403
+    j = request.get_json(silent=True) or {}
+    card = (j.get("card") or request.form.get("card") or "").strip()
+    device = (j.get("device") or request.form.get("device") or "").strip()
+    db = get_db()
+    if card:
+        db.execute("UPDATE cards SET bound_device=NULL, status='unused' WHERE card=?", (card,))
+    if device:
+        db.execute("UPDATE devices SET card=NULL WHERE device=?", (device,))
+    db.commit()
+    return jsonify({"ok": True})
+
 
 @app.route("/hb", methods=["POST"])
 def hb():
