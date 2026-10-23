@@ -61,6 +61,16 @@ DB_PATH = os.environ.get("CARD_DB", os.path.join(BASE_DIR, "cards.db"))
 app = Flask(__name__)
 app.secret_key = SESSION_SECRET
 
+# /api/* 允许跨域（站点是发卡后端，卡密本身即凭证；放开 CORS 不影响安全性，
+# 但能让程序侧本地页 / 其它前端直接调 /api/activate，便于排障与后续演进）。
+@app.after_request
+def _cors(resp):
+    if request.path.startswith("/api/"):
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return resp
+
 # ----------------------------- 数据库 -----------------------------
 def get_db():
     db = getattr(g, "_db", None)
@@ -108,7 +118,8 @@ def init_db():
     );
     """)
     # 兼容旧库：补列
-    for col, typ in (("bound_device", "TEXT"), ("activated_at", "INTEGER")):
+    for col, typ in (("bound_device", "TEXT"), ("activated_at", "INTEGER"),
+                     ("kind", "TEXT DEFAULT 'normal'")):
         try:
             db.execute("ALTER TABLE cards ADD COLUMN %s %s" % (col, typ))
         except Exception:
@@ -131,6 +142,8 @@ def init_db():
 init_db()
 
 # ----------------------------- 卡密 / 令牌算法 -----------------------------
+PROMO_MONTH_DAYS = {1: 30, 3: 90, 6: 180, 12: 365}
+
 def make_card(secret, expiry_unix, machine=MACHINE):
     """与 licensing.cpp signLicense 字节级一致（3 段通用卡）。"""
     exp = str(expiry_unix)
@@ -305,6 +318,9 @@ h1{font-size:20px}a{color:#3b82f6;text-decoration:none;margin-right:14px}
 .stat{background:#0f1115;border:1px solid #2a2e38;border-radius:10px;padding:14px 18px;min-width:120px}
 .stat b{display:block;font-size:22px;margin-top:4px}
 .stat.green b{color:#4ade80}.stat.red b{color:#ff6b6b}.stat.blue b{color:#3b82f6}
+.stat.purple b{color:#a78bfa}
+.badge{display:inline-block;padding:1px 6px;border-radius:6px;background:#10b981;
+color:#04120b;font-size:11px;font-weight:700;margin-left:6px}
 label{display:block;margin:10px 0 4px;font-size:13px;color:#9aa0ac}
 input,select{width:100%;padding:9px;background:#0f1115;border:1px solid #2a2e38;
 border-radius:8px;color:#e6e6e6;box-sizing:border-box}
@@ -328,6 +344,26 @@ border-radius:8px;font-family:monospace;font-size:12px;word-break:break-all;whit
 <div class=stat blue><span class=muted>已激活</span><b>{{s_activated}}</b></div>
 <div class=stat green><span class=muted>在线设备(近{{win}}分)</span><b>{{s_online}}</b></div>
 <div class=stat red><span class=muted>已封禁卡</span><b>{{s_banned}}</b></div>
+<div class=stat purple><span class=muted>公益卡</span><b>{{s_promo}}</b></div>
+</div>
+
+<div class=card>
+<h3>生成公益卡（一机一码）</h3>
+<form method=post>
+<input name=_csrf value="{{csrf}}" type=hidden>
+<input name=act value=gen_promo type=hidden>
+<label>数量</label><input name=qty type=number min=1 max=500 value=10>
+<label>时长</label><select name=months>
+<option value=1>1 个月（30 天）</option>
+<option value=3 selected>3 个月（90 天）</option>
+<option value=6>6 个月（180 天）</option>
+<option value=12>12 个月（365 天）</option>
+</select>
+<label>备注（可选）</label><input name=note placeholder=公益卡 / 活动批次>
+<button>生成公益卡</button>
+</form>
+<div class=muted style="margin-top:10px">公益卡和普通卡一样是一机一码，区别只是打了标记：
+库存里会显示「公益」标签，右上角单独统计，可按「只看公益卡」筛选。</div>
 </div>
 
 <div class=card>
@@ -349,14 +385,14 @@ border-radius:8px;font-family:monospace;font-size:12px;word-break:break-all;whit
 </div>
 
 <div class=card>
-<h3>卡密库存（最近 200 条）</h3>
+<h3>卡密库存（最近 200 条）　<a href="/">全部</a><a href="/?kind=promo">只看公益卡</a></h3>
 <table><tr><th>#</th><th>卡密</th><th>过期</th><th>状态</th><th>绑定设备</th><th>在线</th><th>备注</th><th>操作</th></tr>
 {% for r in rows %}<tr><td>{{loop.index}}</td>
 <td class=code>{{r.card}}</td><td>{{r.expiry_fmt}}</td>
 <td>{% if r.status=='banned' %}<span class=banned>已封禁</span>{% elif r.status=='activated' %}已激活{% else %}未使用{% endif %}</td>
 <td class=code>{% if r.bound_device %}{{r.bound_device}}{% else %}—{% endif %}</td>
 <td>{% if r.online %}<span class=on>在线</span>{% else %}<span class=off>离线</span>{% endif %}</td>
-<td>{{r.note or ''}}</td>
+<td>{{r.note or ''}}{% if r.kind=='promo' %}<span class=badge>公益</span>{% endif %}</td>
 <td>
 {% if r.status!='banned' %}<form method=post style="display:inline"><input name=_csrf value="{{csrf}}" type=hidden><input name=card value="{{r.card}}" type=hidden><button class="btn-sm btn-ban" name=act value=ban>封禁</button></form>{% else %}<form method=post style="display:inline"><input name=_csrf value="{{csrf}}" type=hidden><input name=card value="{{r.card}}" type=hidden><button class="btn-sm btn-ext" name=act value=unban>解封</button></form>{% endif %}
 <form method=post style="display:inline"><input name=_csrf value="{{csrf}}" type=hidden><input name=card value="{{r.card}}" type=hidden><input name=days value=30 size=2 style="width:42px;display:inline;padding:3px"><button class="btn-sm btn-ext" name=act value=extend>加时长</button></form>
@@ -431,14 +467,65 @@ border-radius:8px;font-family:monospace;font-size:12px;word-break:break-all}
 <h2>17内核 · 卡密激活（绑设备）</h2>
 <div class=steps>① 在程序里复制“本机设备码” → ② 在此粘贴卡密+设备码 →
 ③ 点激活 → ④ 把下方令牌粘贴回程序（或点下载按钮存到手机 Download，程序里点「③ 读取令牌文件」）。</div>
-<form method=post>
-<input name=card placeholder=卡密（通用卡）>
-<input name=device placeholder=本机设备码>
-<button>激活并获取令牌</button>
+<form id=actform method=post action=/activate>
+<input name=card id=actcard placeholder=卡密（通用卡）>
+<input name=device id=actdevice placeholder=本机设备码>
+<button id=actbtn type=submit>激活并获取令牌</button>
 </form>
-<div class=err>{{err}}</div>
-{% if token %}<div class=ok>激活成功！把下面这串令牌粘贴回程序：</div>
-<div class=token>{{token}}</div>{% endif %}
+<div class=err id=acterr>{{err}}</div>
+<div id=actresult></div>
+<script>
+(function(){
+  var f=document.getElementById('actform');
+  var err=document.getElementById('acterr');
+  var res=document.getElementById('actresult');
+  f.addEventListener('submit', function(e){
+    e.preventDefault();
+    err.textContent=''; res.innerHTML='';
+    var card=document.getElementById('actcard').value.trim();
+    var device=document.getElementById('actdevice').value.trim();
+    if(!card||!device){ err.textContent='卡密和设备码都不能为空'; return; }
+    fetch('/api/activate',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({card:card,device:device})})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if(j && j.ok){ onToken(j.token); }
+        else { err.textContent='激活失败：' + ((j&&j.error)||'未知错误'); }
+      })
+      .catch(function(){ err.textContent='网络错误，请检查网络后重试'; });
+  });
+  function onToken(t){
+    res.innerHTML=
+      '<div class=ok>✓ 激活成功！令牌已自动复制到剪贴板</div>'+
+      '<div class=hint style="text-align:left;line-height:1.9">'+
+      '① 直接回程序 → 点「② 读取剪贴板」→ 点「登录授权」即可。<br>'+
+      '② 读不到剪贴板的机型：长按下面令牌手动复制，或回程序点「③ 从文件读取（备用）」。</div>'+
+      '<div class=token></div>';
+    res.querySelector('.token').textContent=t;
+    copyNow(t).then(function(ok){
+      if(!ok){ var o=res.querySelector('.ok'); if(o) o.textContent='✓ 激活成功！但自动复制失败，请长按上方令牌手动复制'; }
+    });
+  }
+  function copyNow(t){
+    return new Promise(function(resolve){
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(t).then(function(){ resolve(true); }, function(){ resolve(fallback(t)); });
+          return;
+        }
+      } catch(e){}
+      resolve(fallback(t));
+    });
+  }
+  function fallback(t){
+    try {
+      var ta=document.createElement('textarea'); ta.value=t; ta.style.position='fixed'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.focus(); ta.select(); var ok=document.execCommand('copy'); document.body.removeChild(ta);
+      return ok;
+    } catch(e){ return false; }
+  }
+})();
+</script>
 </div></body></html>"""
 
 CARD_HTML = """<!doctype html><html lang=zh><head><meta charset=utf-8>
@@ -465,29 +552,72 @@ font-family:monospace;line-height:1.5}
 </style></head><body><div class=box>
 <h2>17内核 · 输入卡密</h2>
 <div class=hint>粘贴你拿到的卡密，点下方按钮即可完成激活并绑定本机。</div>
-<form method=post action=/card>
+<form id=cardform method=post action=/card>
 <label>卡密</label>
 <input name=card id=card placeholder="粘贴卡密" autocomplete=off autocapitalize=off
 autocorrect=off spellcheck=false required>
-<input type=hidden name=device value="{{device}}">
+<input type=hidden name=device id=devfield value="{{device}}">
 <div class=deviceline>本机设备码已自动填入：{{device}}</div>
-<button>激活</button>
+<button id=actbtn type=submit>激活</button>
 </form>
-<div class=err>{{err}}</div>
-{% if token %}
-<div class=ok>✓ 激活成功！</div>
-<div class=hint style="text-align:left;line-height:1.9">按下面两步完成登录，<b>不用复制粘贴</b>：<br>
-① 点下面的大按钮「下载令牌文件」（浏览器会存到手机的 Download 目录）<br>
-② 回到程序 → 点「③ 读取令牌文件」→ 点「登录授权」</div>
-<a class=dlbtn download="storm2_card.txt" href="data:text/plain;base64,{{token_b64}}">⬇ 下载令牌文件</a>
-<div class=token>{{token}}</div>
-<div class=hint>下载失败也没关系：长按上面这串令牌全文 → 复制，回程序点「② 粘贴卡密 / 令牌」（部分手机程序读不到剪贴板，所以优先用文件方式）。</div>
+<div class=err id=err>{{err}}</div>
+<div id=result></div>
 <script>
-// 尽力而为：把令牌写进剪贴板。部分 ROM 悬浮窗进程读不到剪贴板
-// （Android 10+ 隐私限制），所以主推「下载令牌文件」这条通道。
-try { navigator.clipboard && navigator.clipboard.writeText({{token|tojson}}); } catch(e) {}
+(function(){
+  var f=document.getElementById('cardform');
+  var err=document.getElementById('err');
+  var res=document.getElementById('result');
+  f.addEventListener('submit', function(e){
+    e.preventDefault();
+    err.textContent=''; res.innerHTML='';
+    var card=document.getElementById('card').value.trim();
+    var device=document.getElementById('devfield').value.trim();
+    if(!card){ err.textContent='请输入卡密'; return; }
+    fetch('/api/activate',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({card:card,device:device})})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if(j && j.ok){ onToken(j.token); }
+        else { err.textContent='激活失败：' + ((j&&j.error)||'未知错误'); }
+      })
+      .catch(function(){ err.textContent='网络错误，请检查网络后重试'; });
+  });
+  function onToken(t){
+    res.innerHTML=
+      '<div class=ok>✓ 激活成功！令牌已自动复制到剪贴板</div>'+
+      '<div class=hint style="text-align:left;line-height:1.9">'+
+      '① 直接回程序 → 点「② 读取剪贴板」→ 点「登录授权」即可。<br>'+
+      '② 读不到剪贴板的机型：点下方「下载令牌文件」，回程序点「③ 从文件读取（备用）」。</div>'+
+      '<div class=token></div>'+
+      '<a class="dlbtn alt" id=dlbtn download="storm2_card.txt" href="#">⬇ 下载令牌文件（备用）</a>';
+    res.querySelector('.token').textContent=t;
+    try { var b64=btoa(unescape(encodeURIComponent(t))); document.getElementById('dlbtn').href='data:text/plain;base64,'+b64; } catch(e){}
+    // 关键：复制发生在「激活」点击的同一用户手势里（fetch 的 .then 仍属瞬态激活），
+    // 浏览器允许写入剪贴板 —— 这比「页面加载时自动复制」可靠得多。
+    copyNow(t).then(function(ok){
+      if(!ok){ var o=res.querySelector('.ok'); if(o) o.textContent='✓ 激活成功！但自动复制失败，请用下方「下载令牌文件」'; }
+    });
+  }
+  function copyNow(t){
+    return new Promise(function(resolve){
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(t).then(function(){ resolve(true); }, function(){ resolve(fallback(t)); });
+          return;
+        }
+      } catch(e){}
+      resolve(fallback(t));
+    });
+  }
+  function fallback(t){
+    try {
+      var ta=document.createElement('textarea'); ta.value=t; ta.style.position='fixed'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.focus(); ta.select(); var ok=document.execCommand('copy'); document.body.removeChild(ta);
+      return ok;
+    } catch(e){ return false; }
+  }
+})();
 </script>
-{% endif %}
 <script>
 // 自动聚焦：页面打开后键盘自动弹出（移动端要求用户手势时可延后一次）
 window.addEventListener('load', function(){
@@ -649,6 +779,39 @@ def dashboard():
                     else:
                         flash = "已加 %d 天（未绑定设备，买家下次激活即生效）"
                 db.commit()
+        elif act == "gen_promo":
+            # 公益卡：一机一码，只是打个标记，方便统计和筛选。
+            try:
+                qty = max(1, min(500, int(request.form.get("qty", 10))))
+            except ValueError:
+                qty = 10
+            try:
+                months = int(request.form.get("months", 3))
+            except ValueError:
+                months = 3
+            months = max(1, min(24, months))
+            days = PROMO_MONTH_DAYS.get(months, months * 30)
+            note = (request.form.get("note", "") or "公益卡")[:64]
+            expiry = int(time.time()) + days * 86400
+            now = int(time.time())
+            inserted = 0
+            made = []
+            for i in range(qty):
+                tok = make_card(CARD_SECRET, expiry + i)
+                try:
+                    db.execute("INSERT INTO cards (card, machine, expiry, created_at, note, kind) "
+                               "VALUES (?,?,?,?,?,'promo')",
+                               (tok, MACHINE, expiry + i, now, note))
+                    inserted += 1
+                    made.append(tok)
+                except sqlite3.IntegrityError:
+                    pass
+            db.commit()
+            show = made[:30]
+            flash = ("已生成 %d 张公益卡（%d 个月 / %d 天），可直接复制发给客户：\n%s"
+                     % (inserted, months, days, "\n".join(show)))
+            if len(made) > len(show):
+                flash += "\n…其余 %d 张请在下方库存里复制" % (len(made) - len(show))
         elif not act:
             # 批量生成通用卡（无 act 的生成表单）
             try:
@@ -676,13 +839,18 @@ def dashboard():
     s_total = db.execute("SELECT COUNT(*) c FROM cards").fetchone()["c"]
     s_activated = db.execute("SELECT COUNT(*) c FROM cards WHERE status='activated'").fetchone()["c"]
     s_banned = db.execute("SELECT COUNT(*) c FROM cards WHERE status='banned'").fetchone()["c"]
+    s_promo = db.execute("SELECT COUNT(*) c FROM cards WHERE kind='promo'").fetchone()["c"]
     # 在线设备数 = 近窗口内有上报且未封禁的去重设备数（避免一张卡多次计数）
     s_online = db.execute(
         "SELECT COUNT(*) c FROM (SELECT DISTINCT device FROM devices "
         "WHERE banned=0 AND last_seen IS NOT NULL AND last_seen>?)",
         (int(time.time()) - ONLINE_WINDOW,)).fetchone()["c"]
-    rows = db.execute(
-        "SELECT * FROM cards ORDER BY id DESC LIMIT 200").fetchall()
+    only_promo = (request.args.get("kind") == "promo")
+    if only_promo:
+        rows = db.execute("SELECT * FROM cards WHERE kind='promo' "
+                          "ORDER BY id DESC LIMIT 200").fetchall()
+    else:
+        rows = db.execute("SELECT * FROM cards ORDER BY id DESC LIMIT 200").fetchall()
     out = []
     for r in rows:
         online = False
@@ -696,6 +864,7 @@ def dashboard():
             "expiry_fmt": fmt_ts(r["expiry"]),
             "status": r["status"],
             "note": r["note"],
+            "kind": r["kind"] or "normal",
             "bound_device": r["bound_device"] or "",
             "activated_fmt": fmt_ts(r["activated_at"]),
             "online": online,
@@ -704,7 +873,8 @@ def dashboard():
     return render_template_string(DASH_HTML, nav=nav_html,
                                  csrf=gen_csrf(), user=session["admin"], rows=out, flash=flash,
                                  s_total=s_total, s_activated=s_activated,
-                                 s_online=s_online, s_banned=s_banned,
+                                 s_online=s_online, s_banned=s_banned, s_promo=s_promo,
+                                 only_promo=only_promo,
                                  win=ONLINE_WINDOW // 60, new_cards=[])
 
 @app.route("/devices")

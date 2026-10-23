@@ -1,0 +1,154 @@
+--- app.py(原版)
++++ app.py(公益卡)
+@@ -118,7 +118,8 @@
+     );
+     """)
+     # 兼容旧库：补列
+-    for col, typ in (("bound_device", "TEXT"), ("activated_at", "INTEGER")):
++    for col, typ in (("bound_device", "TEXT"), ("activated_at", "INTEGER"),
++                     ("kind", "TEXT DEFAULT 'normal'")):
+         try:
+             db.execute("ALTER TABLE cards ADD COLUMN %s %s" % (col, typ))
+         except Exception:
+@@ -141,6 +142,8 @@
+ init_db()
+ 
+ # ----------------------------- 卡密 / 令牌算法 -----------------------------
++PROMO_MONTH_DAYS = {1: 30, 3: 90, 6: 180, 12: 365}
++
+ def make_card(secret, expiry_unix, machine=MACHINE):
+     """与 licensing.cpp signLicense 字节级一致（3 段通用卡）。"""
+     exp = str(expiry_unix)
+@@ -315,6 +318,9 @@
+ .stat{background:#0f1115;border:1px solid #2a2e38;border-radius:10px;padding:14px 18px;min-width:120px}
+ .stat b{display:block;font-size:22px;margin-top:4px}
+ .stat.green b{color:#4ade80}.stat.red b{color:#ff6b6b}.stat.blue b{color:#3b82f6}
++.stat.purple b{color:#a78bfa}
++.badge{display:inline-block;padding:1px 6px;border-radius:6px;background:#10b981;
++color:#04120b;font-size:11px;font-weight:700;margin-left:6px}
+ label{display:block;margin:10px 0 4px;font-size:13px;color:#9aa0ac}
+ input,select{width:100%;padding:9px;background:#0f1115;border:1px solid #2a2e38;
+ border-radius:8px;color:#e6e6e6;box-sizing:border-box}
+@@ -338,6 +344,26 @@
+ <div class=stat blue><span class=muted>已激活</span><b>{{s_activated}}</b></div>
+ <div class=stat green><span class=muted>在线设备(近{{win}}分)</span><b>{{s_online}}</b></div>
+ <div class=stat red><span class=muted>已封禁卡</span><b>{{s_banned}}</b></div>
++<div class=stat purple><span class=muted>公益卡</span><b>{{s_promo}}</b></div>
++</div>
++
++<div class=card>
++<h3>生成公益卡（一机一码）</h3>
++<form method=post>
++<input name=_csrf value="{{csrf}}" type=hidden>
++<input name=act value=gen_promo type=hidden>
++<label>数量</label><input name=qty type=number min=1 max=500 value=10>
++<label>时长</label><select name=months>
++<option value=1>1 个月（30 天）</option>
++<option value=3 selected>3 个月（90 天）</option>
++<option value=6>6 个月（180 天）</option>
++<option value=12>12 个月（365 天）</option>
++</select>
++<label>备注（可选）</label><input name=note placeholder=公益卡 / 活动批次>
++<button>生成公益卡</button>
++</form>
++<div class=muted style="margin-top:10px">公益卡和普通卡一样是一机一码，区别只是打了标记：
++库存里会显示「公益」标签，右上角单独统计，可按「只看公益卡」筛选。</div>
+ </div>
+ 
+ <div class=card>
+@@ -359,14 +385,14 @@
+ </div>
+ 
+ <div class=card>
+-<h3>卡密库存（最近 200 条）</h3>
++<h3>卡密库存（最近 200 条）　<a href="/">全部</a><a href="/?kind=promo">只看公益卡</a></h3>
+ <table><tr><th>#</th><th>卡密</th><th>过期</th><th>状态</th><th>绑定设备</th><th>在线</th><th>备注</th><th>操作</th></tr>
+ {% for r in rows %}<tr><td>{{loop.index}}</td>
+ <td class=code>{{r.card}}</td><td>{{r.expiry_fmt}}</td>
+ <td>{% if r.status=='banned' %}<span class=banned>已封禁</span>{% elif r.status=='activated' %}已激活{% else %}未使用{% endif %}</td>
+ <td class=code>{% if r.bound_device %}{{r.bound_device}}{% else %}—{% endif %}</td>
+ <td>{% if r.online %}<span class=on>在线</span>{% else %}<span class=off>离线</span>{% endif %}</td>
+-<td>{{r.note or ''}}</td>
++<td>{{r.note or ''}}{% if r.kind=='promo' %}<span class=badge>公益</span>{% endif %}</td>
+ <td>
+ {% if r.status!='banned' %}<form method=post style="display:inline"><input name=_csrf value="{{csrf}}" type=hidden><input name=card value="{{r.card}}" type=hidden><button class="btn-sm btn-ban" name=act value=ban>封禁</button></form>{% else %}<form method=post style="display:inline"><input name=_csrf value="{{csrf}}" type=hidden><input name=card value="{{r.card}}" type=hidden><button class="btn-sm btn-ext" name=act value=unban>解封</button></form>{% endif %}
+ <form method=post style="display:inline"><input name=_csrf value="{{csrf}}" type=hidden><input name=card value="{{r.card}}" type=hidden><input name=days value=30 size=2 style="width:42px;display:inline;padding:3px"><button class="btn-sm btn-ext" name=act value=extend>加时长</button></form>
+@@ -753,6 +779,39 @@
+                     else:
+                         flash = "已加 %d 天（未绑定设备，买家下次激活即生效）"
+                 db.commit()
++        elif act == "gen_promo":
++            # 公益卡：一机一码，只是打个标记，方便统计和筛选。
++            try:
++                qty = max(1, min(500, int(request.form.get("qty", 10))))
++            except ValueError:
++                qty = 10
++            try:
++                months = int(request.form.get("months", 3))
++            except ValueError:
++                months = 3
++            months = max(1, min(24, months))
++            days = PROMO_MONTH_DAYS.get(months, months * 30)
++            note = (request.form.get("note", "") or "公益卡")[:64]
++            expiry = int(time.time()) + days * 86400
++            now = int(time.time())
++            inserted = 0
++            made = []
++            for i in range(qty):
++                tok = make_card(CARD_SECRET, expiry + i)
++                try:
++                    db.execute("INSERT INTO cards (card, machine, expiry, created_at, note, kind) "
++                               "VALUES (?,?,?,?,?,'promo')",
++                               (tok, MACHINE, expiry + i, now, note))
++                    inserted += 1
++                    made.append(tok)
++                except sqlite3.IntegrityError:
++                    pass
++            db.commit()
++            show = made[:30]
++            flash = ("已生成 %d 张公益卡（%d 个月 / %d 天），可直接复制发给客户：\n%s"
++                     % (inserted, months, days, "\n".join(show)))
++            if len(made) > len(show):
++                flash += "\n…其余 %d 张请在下方库存里复制" % (len(made) - len(show))
+         elif not act:
+             # 批量生成通用卡（无 act 的生成表单）
+             try:
+@@ -780,13 +839,18 @@
+     s_total = db.execute("SELECT COUNT(*) c FROM cards").fetchone()["c"]
+     s_activated = db.execute("SELECT COUNT(*) c FROM cards WHERE status='activated'").fetchone()["c"]
+     s_banned = db.execute("SELECT COUNT(*) c FROM cards WHERE status='banned'").fetchone()["c"]
++    s_promo = db.execute("SELECT COUNT(*) c FROM cards WHERE kind='promo'").fetchone()["c"]
+     # 在线设备数 = 近窗口内有上报且未封禁的去重设备数（避免一张卡多次计数）
+     s_online = db.execute(
+         "SELECT COUNT(*) c FROM (SELECT DISTINCT device FROM devices "
+         "WHERE banned=0 AND last_seen IS NOT NULL AND last_seen>?)",
+         (int(time.time()) - ONLINE_WINDOW,)).fetchone()["c"]
+-    rows = db.execute(
+-        "SELECT * FROM cards ORDER BY id DESC LIMIT 200").fetchall()
++    only_promo = (request.args.get("kind") == "promo")
++    if only_promo:
++        rows = db.execute("SELECT * FROM cards WHERE kind='promo' "
++                          "ORDER BY id DESC LIMIT 200").fetchall()
++    else:
++        rows = db.execute("SELECT * FROM cards ORDER BY id DESC LIMIT 200").fetchall()
+     out = []
+     for r in rows:
+         online = False
+@@ -800,6 +864,7 @@
+             "expiry_fmt": fmt_ts(r["expiry"]),
+             "status": r["status"],
+             "note": r["note"],
++            "kind": r["kind"] or "normal",
+             "bound_device": r["bound_device"] or "",
+             "activated_fmt": fmt_ts(r["activated_at"]),
+             "online": online,
+@@ -808,7 +873,8 @@
+     return render_template_string(DASH_HTML, nav=nav_html,
+                                  csrf=gen_csrf(), user=session["admin"], rows=out, flash=flash,
+                                  s_total=s_total, s_activated=s_activated,
+-                                 s_online=s_online, s_banned=s_banned,
++                                 s_online=s_online, s_banned=s_banned, s_promo=s_promo,
++                                 only_promo=only_promo,
+                                  win=ONLINE_WINDOW // 60, new_cards=[])
+ 
+ @app.route("/devices")
